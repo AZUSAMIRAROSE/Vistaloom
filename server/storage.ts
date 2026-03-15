@@ -79,13 +79,19 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getCartItems(customerId: number): Promise<CartItem[]> {
-    const items = await db.select().from(schema.carts).where(eq(schema.carts.customerId, customerId));
-    const result: CartItem[] = [];
-    for (const item of items) {
-      const [product] = await db.select().from(schema.products).where(eq(schema.products.id, item.productId));
-      if (product) result.push({ ...item, product });
-    }
-    return result;
+    const items = await db
+      .select({
+        cart: schema.carts,
+        product: schema.products,
+      })
+      .from(schema.carts)
+      .innerJoin(schema.products, eq(schema.carts.productId, schema.products.id))
+      .where(eq(schema.carts.customerId, customerId));
+
+    return items.map((row) => ({
+      ...row.cart,
+      product: row.product,
+    }));
   }
 
   async addToCart(item: InsertCart): Promise<Cart> {
@@ -116,27 +122,35 @@ export class DatabaseStorage implements IStorage {
   }
 
   async placeOrder(customerId: number, productIds: number[], address: string, paymentMethod: string): Promise<void> {
-    for (const productId of productIds) {
-      await db.insert(schema.orders).values({
+    if (productIds.length > 0) {
+      const values = productIds.map((productId) => ({
         productId,
         customerId,
         status: "Pending",
         paymentMethod,
         paymentStatus: "Pending",
         address,
-      });
+      }));
+      await db.insert(schema.orders).values(values);
     }
     await this.clearCart(customerId);
   }
 
   async getOrders(customerId: number): Promise<OrderItem[]> {
-    const orderList = await db.select().from(schema.orders).where(eq(schema.orders.customerId, customerId));
-    const result: OrderItem[] = [];
-    for (const order of orderList) {
-      const [product] = await db.select().from(schema.products).where(eq(schema.products.id, order.productId));
-      if (product) result.push({ ...order, product });
-    }
-    return result;
+    const items = await db
+      .select({
+        order: schema.orders,
+        product: schema.products,
+      })
+      .from(schema.orders)
+      .innerJoin(schema.products, eq(schema.orders.productId, schema.products.id))
+      .where(eq(schema.orders.customerId, customerId));
+      
+    // Order from newest to oldest by sorting the result
+    return items.map((row) => ({
+      ...row.order,
+      product: row.product,
+    })).sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
   }
 }
 
